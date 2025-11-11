@@ -1,0 +1,3 @@
+python-ffmpeg-video-streaming==0.1.16
+colorama==0.4.6
+webvtt-py==0.5.1
