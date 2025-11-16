@@ -289,12 +289,12 @@ for mkv_file in mkv_files:
             print_colored(f"Субтитры ({lang}) извлечены и добавлены в m3u8.", Fore.BLUE)
 
     lang_names = {
-        "uk": "Украинский",
-        "ru": "Русский",
-        "en": "Английский",
-        "kk": "Казахский",
-        "zh": "Китайский",
-        "und": "Неизвестный"
+        "uk": "ukrainian",
+        "ru": "russian",
+        "en": "english",
+        "kk": "kazakh",
+        "zh": "chinese",
+        "und": "undetermined"
     }
 
     src_w, src_h = None, None
