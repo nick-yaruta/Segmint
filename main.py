@@ -114,24 +114,60 @@ mkv_files = [file for file in os.listdir(current_dir) if file.endswith(".mkv")]
 
 for mkv_file in mkv_files:
     base_name = os.path.splitext(mkv_file)[0]
-    print_colored(f"Обработка файла: {mkv_file}...", Fore.YELLOW)
+    print_colored(f"Processing file: {mkv_file}...", Fore.YELLOW)
 
     if not os.path.exists(base_name):
         os.mkdir(base_name)
 
     os.chdir(base_name)
 
-    resolutions = {
-        "1080p": ("1920:1080", 5500000),
-        "720p": ("1280:720", 3000000),
-        "480p": ("854:480", 1500000),
-        "360p": ("640:360", 800000)
-    }
+    ffprobe_output = subprocess.check_output(
+        f"ffprobe -v quiet -print_format json -show_streams ../{mkv_file}", shell=True
+    )
+    streams_info = json.loads(ffprobe_output)
+
+    src_w, src_h = None, None
+    for _s in streams_info.get("streams", []):
+        if _s.get("codec_type") == "video":
+            src_w = int(_s.get("width", 0) or 0)
+            src_h = int(_s.get("height", 0) or 0)
+            break
+
+    if src_w and src_h:
+        ratio = src_w / src_h
+    else:
+        ratio = 1.77
+
+    if ratio > 2.1:
+        resolutions = {
+            "1080p": ("1920:804", 4100000),
+            "720p":  ("1280:536", 2250000),
+            "480p":  ("854:358", 1100000),
+            "360p":  ("640:268", 600000)
+        }
+    elif ratio > 1.8:
+        resolutions = {
+            "1080p": ("1920:1038", 5300000),
+            "720p":  ("1280:692", 2900000),
+            "480p":  ("854:462", 1450000),
+            "360p":  ("640:346", 750000)
+        }
+    else:
+        resolutions = {
+            "1080p": ("1920:1080", 5500000),
+            "720p": ("1280:720", 3000000),
+            "480p": ("854:480", 1500000),
+            "360p": ("640:360", 800000)
+        }
 
     for res_label, (scale, bitrate) in resolutions.items():
+        w_target, h_target = map(int, scale.split(":"))
+        if src_w and src_h and (w_target > src_w or h_target > src_h):
+            print_colored(f"Skipping {res_label}: resolution higher than source.", Fore.BLUE)
+            continue
+
         os.makedirs(res_label, exist_ok=True)
         output_path = f"{res_label}/{res_label}.m3u8"
-        segment_path = f"{res_label}/%04d.ts"
         
         ffmpeg_cmd_gpu = (
             f"ffmpeg -hide_banner -loglevel error -y -i ../{mkv_file} "
@@ -163,16 +199,11 @@ for mkv_file in mkv_files:
         result = subprocess.run(ffmpeg_cmd_gpu, shell=True, stderr=subprocess.DEVNULL)
         if result.returncode != 0:
             subprocess.run(ffmpeg_cmd_cpu, shell=True)
-            print_colored(f"Кодирование CPU прошло успешно ({res_label}).", Fore.CYAN)
+            print_colored(f"CPU encoding successful ({res_label}).", Fore.CYAN)
         else:
-            print_colored(f"Кодирование CUDA прошло успешно ({res_label}).", Fore.CYAN)
+            print_colored(f"CUDA encoding successful ({res_label}).", Fore.CYAN)
 
         correct_hls_version(output_path, 6)
-
-    ffprobe_output = subprocess.check_output(
-        f"ffprobe -v quiet -print_format json -show_streams ../{mkv_file}", shell=True
-    )
-    streams_info = json.loads(ffprobe_output)
 
     audio_languages = []
     subtitle_languages = []
@@ -184,6 +215,7 @@ for mkv_file in mkv_files:
             "rus": "ru",
             "ukr": "uk",
             "eng": "en",
+            "fra": "fr",
             "kaz": "kk",
             "zho": "zh",
             "chi": "zh",
@@ -213,7 +245,7 @@ for mkv_file in mkv_files:
             correct_hls_version(audio_m3u8_path, 6)
             
             audio_languages.append(lang)
-            print_colored(f"Аудио дорожка ({lang}) обработана.", Fore.GREEN)
+            print_colored(f"Audio track ({lang}) processed.", Fore.GREEN)
 
         elif stream["codec_type"] == "subtitle":
             folder = f"subtitles_{lang}"
@@ -232,7 +264,7 @@ for mkv_file in mkv_files:
                     s, ms = rest.split('.')
                     return timedelta(hours=int(h), minutes=int(m), seconds=int(s), milliseconds=int(ms))
                 else:
-                    raise ValueError(f"Неверный формат времени: {ts}")
+                    raise ValueError(f"Invalid time format: {ts}")
 
             def format_timestamp(td):
                 total_seconds = td.total_seconds()
@@ -286,23 +318,17 @@ for mkv_file in mkv_files:
                 m3u.write("#EXT-X-ENDLIST\n")
 
             subtitle_languages.append(lang)
-            print_colored(f"Субтитры ({lang}) извлечены и добавлены в m3u8.", Fore.BLUE)
+            print_colored(f"Subtitles ({lang}) extracted and added to m3u8.", Fore.BLUE)
 
     lang_names = {
         "uk": "ukrainian",
         "ru": "russian",
         "en": "english",
+        "fr": "french",
         "kk": "kazakh",
         "zh": "chinese",
         "und": "undetermined"
     }
-
-    src_w, src_h = None, None
-    for _s in streams_info.get("streams", []):
-        if _s.get("codec_type") == "video":
-            src_w = int(_s.get("width", 0) or 0)
-            src_h = int(_s.get("height", 0) or 0)
-            break
 
     available_renditions = []
     for res_label, (scale, bitrate) in resolutions.items():
@@ -314,7 +340,7 @@ for mkv_file in mkv_files:
 
     with open("master.m3u8", "w", encoding="utf-8") as master:
         master.write("#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-INDEPENDENT-SEGMENTS\n\n")
-        master.write("# Видео потоки\n")
+        master.write("# Video streams\n")
 
         for res_label, w, h, bitrate in available_renditions:
             master.write(
@@ -324,7 +350,7 @@ for mkv_file in mkv_files:
                 f"{res_label}/{res_label}.m3u8\n"
             )
 
-        master.write("\n# Аудио потоки\n")
+        master.write("\n# Audio streams\n")
         for i, lang in enumerate(audio_languages):
             audio_path = os.path.join(f"audio_{lang}", f"audio_{lang}.m3u8")
             if not os.path.isfile(audio_path):
@@ -336,7 +362,7 @@ for mkv_file in mkv_files:
             )
 
         if subtitle_languages:
-            master.write("\n# Текстовые потоки\n")
+            master.write("\n# Subtitle streams\n")
             for lang in subtitle_languages:
                 subs_path = os.path.join(f"subtitles_{lang}", f"subtitles_{lang}.m3u8")
                 if not os.path.isfile(subs_path):
@@ -347,10 +373,10 @@ for mkv_file in mkv_files:
                     f"URI=\"subtitles_{lang}/subtitles_{lang}.m3u8\"\n"
                 )
 
-    print_colored("Файл master.m3u8 успешно создан.", Fore.CYAN)
+    print_colored("File master.m3u8 successfully created.", Fore.CYAN)
 
     os.chdir("..")
     os.remove(mkv_file)
-    print_colored(f"Исходный файл {mkv_file} удалён.", Fore.RED)
+    print_colored(f"Source file {mkv_file} deleted.", Fore.RED)
 
-print_colored("Все MKV файлы обработаны.", Fore.YELLOW)
+print_colored("All MKV files processed.", Fore.YELLOW)
