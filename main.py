@@ -36,7 +36,7 @@ def correct_hls_version(m3u8_path, target_version):
         with open(m3u8_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
         return True
-    except Exception as e:
+    except Exception:
         return False
 
 def segment_webvtt(vtt_input_path, output_folder, lang, segment_duration=2):
@@ -174,11 +174,13 @@ for mkv_file in mkv_files:
 
         if is_mac:
             ffmpeg_cmd_hardware = (
-                f"ffmpeg -hide_banner -loglevel error -y -i ../{mkv_file} "
+                f"ffmpeg -hide_banner -loglevel error -y "
+                f"-hwaccel videotoolbox -hwaccel_output_format nv12 "
+                f"-i ../{mkv_file} "
                 f"-c:v h264_videotoolbox "
-                f"-profile:v main "
+                f"-profile:v high "
                 f"-b:v {bitrate} -maxrate {int(bitrate * 1.1)} -bufsize {int(bitrate * 2)} "
-                f"-vf scale={scale} "
+                f"-vf \"sidedata=mode=delete,scale={scale}\" "
                 f"-g 48 -force_key_frames \"expr:gte(t,n_forced*2)\" "
                 f"-an -sn "
                 f"-hls_time 2 -hls_playlist_type vod -hls_flags independent_segments "
@@ -216,9 +218,11 @@ for mkv_file in mkv_files:
             f"{res_label}/{res_label}.m3u8"
         )
 
-        result = subprocess.run(ffmpeg_cmd_hardware, shell=True, stderr=subprocess.DEVNULL)
+        result = subprocess.run(ffmpeg_cmd_hardware, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        
         if result.returncode != 0:
-            subprocess.run(ffmpeg_cmd_cpu, shell=True)
+            print_colored(f"Hardware encoding failed for {res_label}. Falling back to CPU...", Fore.YELLOW)
+            subprocess.run(ffmpeg_cmd_cpu, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             print_colored(f"CPU encoding successful ({res_label}).", Fore.CYAN)
         else:
             print_colored(success_log_msg, Fore.CYAN)
@@ -226,13 +230,15 @@ for mkv_file in mkv_files:
         correct_hls_version(output_path, 6)
 
     lang_aliases = {
-        "rus": "ru", "ukr": "uk", "eng": "en", 
-        "fra": "fr", "kaz": "kk", "zho": "zh", "chi": "zh", "und": "und"
+        "rus": "ru", "ukr": "uk", "bel": "be", "eng": "en", 
+        "ger": "de", "deu": "de", "fra": "fr", "spa": "es", 
+        "kaz": "kk", "zho": "zh", "chi": "zh", "und": "und"
     }
 
     lang_names_capitalized = {
-        "uk": "Ukrainian", "ru": "Russian", "en": "English", 
-        "fr": "French", "kk": "Kazakh", "zh": "Chinese", "und": "Undetermined"
+        "uk": "Ukrainian", "be": "Belarusian", "ru": "Russian", 
+        "en": "English", "de": "German", "fr": "French", 
+        "es": "Spanish", "kk": "Kazakh", "zh": "Chinese", "und": "Undetermined"
     }
 
     audio_streams = []
@@ -261,7 +267,7 @@ for mkv_file in mkv_files:
         if "forced" in title or "форсир" in title or "форс" in title: return 3
         return 10
 
-    LANG_ORDER = ['uk', 'ru', 'en', 'fr', 'kk', 'zh']
+    LANG_ORDER = ['uk', 'be', 'ru', 'de', 'en', 'fr', 'es', 'kk', 'zh']
     def get_lang_priority(st):
         l = st.get("tags", {}).get("language", "und")
         l = lang_aliases.get(l, l)
@@ -312,7 +318,6 @@ for mkv_file in mkv_files:
             "playlist_uri": f"{folder}/{playlist_name}"
         })
         print_colored(f"Audio track '{final_name}' processed (Folder: {folder}).", Fore.GREEN)
-
 
     for internal_idx, stream in enumerate(subtitle_streams, start=1):
         lang = stream.get("tags", {}).get("language", "und")
